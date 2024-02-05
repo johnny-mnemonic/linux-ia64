@@ -1644,20 +1644,6 @@ static void __init alloc_node_mem_map(struct pglist_data *pgdat)
 
 	start = pgdat->node_start_pfn & ~(MAX_ORDER_NR_PAGES - 1);
 	offset = pgdat->node_start_pfn - start;
-	/*
-		 * The zone's endpoints aren't required to be MAX_PAGE_ORDER
-	 * aligned but the node_mem_map endpoints must be in order
-	 * for the buddy allocator to function correctly.
-	 */
-	end = ALIGN(pgdat_end_pfn(pgdat), MAX_ORDER_NR_PAGES);
-	size =  (end - start) * sizeof(struct page);
-	map = memmap_alloc(size, SMP_CACHE_BYTES, MEMBLOCK_LOW_LIMIT,
-			   pgdat->node_id, false);
-	if (!map)
-		panic("Failed to allocate %ld bytes for node %d memory map\n",
-		      size, pgdat->node_id);
-	pgdat->node_mem_map = map + offset;
-
 	/* ia64 gets its own node_mem_map, before this, without bootmem */
 	if (!pgdat->node_mem_map) {
 		unsigned long size, end;
@@ -1678,7 +1664,6 @@ static void __init alloc_node_mem_map(struct pglist_data *pgdat)
 			      size, pgdat->node_id);
 		pgdat->node_mem_map = map + offset;
 	}
-
 	pr_debug("%s: node %d, pgdat %08lx, node_mem_map %08lx\n",
 				__func__, pgdat->node_id, (unsigned long)pgdat,
 				(unsigned long)pgdat->node_mem_map);
