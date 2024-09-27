@@ -71,6 +71,12 @@
 #define IF_HAVE_PG_MLOCK(_name)
 #endif
 
+#ifdef CONFIG_ARCH_USES_PG_UNCACHED
+#define IF_HAVE_PG_UNCACHED(_name) ,{1UL << PG_##_name, __stringify(_name)}
+#else
+#define IF_HAVE_PG_UNCACHED(_name)
+#endif
+
 #ifdef CONFIG_MEMORY_FAILURE
 #define IF_HAVE_PG_HWPOISON(_name) ,{1UL << PG_##_name, __stringify(_name)}
 #else
