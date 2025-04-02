@@ -2773,7 +2773,9 @@ void __init mm_core_init(void)
 	 */
 	kho_memory_init();
 
+#ifndef CONFIG_IA64
 	memblock_free_all();
+#endif
 	mem_init();
 	kmem_cache_init();
 	/*
