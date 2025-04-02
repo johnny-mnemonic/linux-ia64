@@ -2767,7 +2767,9 @@ void __init mm_core_init(void)
 	report_meminit();
 	kmsan_init_shadow();
 	stack_depot_early_init();
+#ifndef CONFIG_IA64
 	memblock_free_all();
+#endif
 	mem_init();
 	kmem_cache_init();
 	/*
