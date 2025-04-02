@@ -465,7 +465,6 @@ mem_init (void)
 #endif
 
 	high_memory = __va(max_low_pfn * PAGE_SIZE);
-	memblock_free_all();
 
 	/*
 	 * For fsyscall entrypoints with no light-weight handler, use the ordinary
