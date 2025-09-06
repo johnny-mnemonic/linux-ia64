@@ -36,20 +36,24 @@
 #define VSC_TP_XFER_TIMEOUT_BYTES		700
 #define VSC_TP_PACKET_PADDING_SIZE		1
 #define VSC_TP_PACKET_SIZE(pkt) \
-	(sizeof(struct vsc_tp_packet) + le16_to_cpu((pkt)->len) + VSC_TP_CRC_SIZE)
+	(sizeof(struct vsc_tp_packet_hdr) + le16_to_cpu((pkt)->hdr.len) + VSC_TP_CRC_SIZE)
 #define VSC_TP_MAX_PACKET_SIZE \
-	(sizeof(struct vsc_tp_packet) + VSC_TP_MAX_MSG_SIZE + VSC_TP_CRC_SIZE)
+	(sizeof(struct vsc_tp_packet_hdr) + VSC_TP_MAX_MSG_SIZE + VSC_TP_CRC_SIZE)
 #define VSC_TP_MAX_XFER_SIZE \
 	(VSC_TP_MAX_PACKET_SIZE + VSC_TP_XFER_TIMEOUT_BYTES)
 #define VSC_TP_NEXT_XFER_LEN(len, offset) \
-	(len + sizeof(struct vsc_tp_packet) + VSC_TP_CRC_SIZE - offset + VSC_TP_PACKET_PADDING_SIZE)
+	(len + sizeof(struct vsc_tp_packet_hdr) + VSC_TP_CRC_SIZE - offset + VSC_TP_PACKET_PADDING_SIZE)
 
-struct vsc_tp_packet {
+struct vsc_tp_packet_hdr {
 	__u8 sync;
 	__u8 cmd;
 	__le16 len;
 	__le32 seq;
-	__u8 buf[] __counted_by(len);
+};
+
+struct vsc_tp_packet {
+	struct vsc_tp_packet_hdr hdr;
+	__u8 buf[VSC_TP_MAX_XFER_SIZE - sizeof(struct vsc_tp_packet_hdr)];
 };
 
 struct vsc_tp {
@@ -67,8 +71,8 @@ struct vsc_tp {
 	u32 seq;
 
 	/* command buffer */
-	void *tx_buf;
-	void *rx_buf;
+	struct vsc_tp_packet *tx_buf;
+	struct vsc_tp_packet *rx_buf;
 
 	atomic_t assert_cnt;
 	wait_queue_head_t xfer_wait;
@@ -158,12 +162,12 @@ static int vsc_tp_dev_xfer(struct vsc_tp *tp, void *obuf, void *ibuf, size_t len
 static int vsc_tp_xfer_helper(struct vsc_tp *tp, struct vsc_tp_packet *pkt,
 			      void *ibuf, u16 ilen)
 {
-	int ret, offset = 0, cpy_len, src_len, dst_len = sizeof(struct vsc_tp_packet);
+	int ret, offset = 0, cpy_len, src_len, dst_len = sizeof(struct vsc_tp_packet_hdr);
 	int next_xfer_len = VSC_TP_PACKET_SIZE(pkt) + VSC_TP_XFER_TIMEOUT_BYTES;
-	u8 *src, *crc_src, *rx_buf = tp->rx_buf;
+	u8 *src, *crc_src, *rx_buf = (u8 *)tp->rx_buf;
 	int count_down = VSC_TP_MAX_XFER_COUNT;
 	u32 recv_crc = 0, crc = ~0;
-	struct vsc_tp_packet ack;
+	struct vsc_tp_packet_hdr ack;
 	u8 *dst = (u8 *)&ack;
 	bool synced = false;
 
@@ -280,10 +284,10 @@ int vsc_tp_xfer(struct vsc_tp *tp, u8 cmd, const void *obuf, size_t olen,
 
 	guard(mutex)(&tp->mutex);
 
-	pkt->sync = VSC_TP_PACKET_SYNC;
-	pkt->cmd = cmd;
-	pkt->len = cpu_to_le16(olen);
-	pkt->seq = cpu_to_le32(++tp->seq);
+	pkt->hdr.sync = VSC_TP_PACKET_SYNC;
+	pkt->hdr.cmd = cmd;
+	pkt->hdr.len = cpu_to_le16(olen);
+	pkt->hdr.seq = cpu_to_le32(++tp->seq);
 	memcpy(pkt->buf, obuf, olen);
 
 	crc = ~crc32(~0, (u8 *)pkt, sizeof(pkt) + olen);
@@ -299,7 +303,7 @@ int vsc_tp_xfer(struct vsc_tp *tp, u8 cmd, const void *obuf, size_t olen,
 
 	return ret;
 }
-EXPORT_SYMBOL_NS_GPL(vsc_tp_xfer, VSC_TP);
+EXPORT_SYMBOL_NS_GPL(vsc_tp_xfer, "VSC_TP");
 
 /**
  * vsc_tp_rom_xfer - transfer data to rom code
@@ -320,7 +324,7 @@ int vsc_tp_rom_xfer(struct vsc_tp *tp, const void *obuf, void *ibuf, size_t len)
 	guard(mutex)(&tp->mutex);
 
 	/* rom xfer is big endian */
-	cpu_to_be32_array(tp->tx_buf, obuf, words);
+	cpu_to_be32_array((__be32 *)tp->tx_buf, obuf, words);
 
 	ret = read_poll_timeout(gpiod_get_value_cansleep, ret,
 				!ret, VSC_TP_ROM_XFER_POLL_DELAY_US,
@@ -336,7 +340,7 @@ int vsc_tp_rom_xfer(struct vsc_tp *tp, const void *obuf, void *ibuf, size_t len)
 		return ret;
 
 	if (ibuf)
-		be32_to_cpu_array(ibuf, tp->rx_buf, words);
+		be32_to_cpu_array(ibuf, (__be32 *)tp->rx_buf, words);
 
 	return ret;
 }
@@ -364,10 +368,8 @@ void vsc_tp_reset(struct vsc_tp *tp)
 	gpiod_set_value_cansleep(tp->wakeupfw, 1);
 
 	atomic_set(&tp->assert_cnt, 0);
-
-	enable_irq(tp->spi->irq);
 }
-EXPORT_SYMBOL_NS_GPL(vsc_tp_reset, VSC_TP);
+EXPORT_SYMBOL_NS_GPL(vsc_tp_reset, "VSC_TP");
 
 /**
  * vsc_tp_need_read - check if device has data to sent
@@ -385,7 +387,7 @@ bool vsc_tp_need_read(struct vsc_tp *tp)
 
 	return true;
 }
-EXPORT_SYMBOL_NS_GPL(vsc_tp_need_read, VSC_TP);
+EXPORT_SYMBOL_NS_GPL(vsc_tp_need_read, "VSC_TP");
 
 /**
  * vsc_tp_register_event_cb - register a callback function to receive event
@@ -402,7 +404,7 @@ int vsc_tp_register_event_cb(struct vsc_tp *tp, vsc_tp_event_cb_t event_cb,
 
 	return 0;
 }
-EXPORT_SYMBOL_NS_GPL(vsc_tp_register_event_cb, VSC_TP);
+EXPORT_SYMBOL_NS_GPL(vsc_tp_register_event_cb, "VSC_TP");
 
 /**
  * vsc_tp_request_irq - request irq for vsc_tp device
@@ -423,7 +425,7 @@ int vsc_tp_request_irq(struct vsc_tp *tp)
 
 	return 0;
 }
-EXPORT_SYMBOL_NS_GPL(vsc_tp_request_irq, VSC_TP);
+EXPORT_SYMBOL_NS_GPL(vsc_tp_request_irq, "VSC_TP");
 
 /**
  * vsc_tp_free_irq - free irq for vsc_tp device
@@ -433,7 +435,7 @@ void vsc_tp_free_irq(struct vsc_tp *tp)
 {
 	free_irq(tp->spi->irq, tp);
 }
-EXPORT_SYMBOL_NS_GPL(vsc_tp_free_irq, VSC_TP);
+EXPORT_SYMBOL_NS_GPL(vsc_tp_free_irq, "VSC_TP");
 
 /**
  * vsc_tp_intr_synchronize - synchronize vsc_tp interrupt
@@ -443,7 +445,7 @@ void vsc_tp_intr_synchronize(struct vsc_tp *tp)
 {
 	synchronize_irq(tp->spi->irq);
 }
-EXPORT_SYMBOL_NS_GPL(vsc_tp_intr_synchronize, VSC_TP);
+EXPORT_SYMBOL_NS_GPL(vsc_tp_intr_synchronize, "VSC_TP");
 
 /**
  * vsc_tp_intr_enable - enable vsc_tp interrupt
@@ -453,7 +455,7 @@ void vsc_tp_intr_enable(struct vsc_tp *tp)
 {
 	enable_irq(tp->spi->irq);
 }
-EXPORT_SYMBOL_NS_GPL(vsc_tp_intr_enable, VSC_TP);
+EXPORT_SYMBOL_NS_GPL(vsc_tp_intr_enable, "VSC_TP");
 
 /**
  * vsc_tp_intr_disable - disable vsc_tp interrupt
@@ -463,7 +465,7 @@ void vsc_tp_intr_disable(struct vsc_tp *tp)
 {
 	disable_irq(tp->spi->irq);
 }
-EXPORT_SYMBOL_NS_GPL(vsc_tp_intr_disable, VSC_TP);
+EXPORT_SYMBOL_NS_GPL(vsc_tp_intr_disable, "VSC_TP");
 
 static int vsc_tp_match_any(struct acpi_device *adev, void *data)
 {
@@ -492,11 +494,11 @@ static int vsc_tp_probe(struct spi_device *spi)
 	if (!tp)
 		return -ENOMEM;
 
-	tp->tx_buf = devm_kzalloc(dev, VSC_TP_MAX_XFER_SIZE, GFP_KERNEL);
+	tp->tx_buf = devm_kzalloc(dev, sizeof(*tp->tx_buf), GFP_KERNEL);
 	if (!tp->tx_buf)
 		return -ENOMEM;
 
-	tp->rx_buf = devm_kzalloc(dev, VSC_TP_MAX_XFER_SIZE, GFP_KERNEL);
+	tp->rx_buf = devm_kzalloc(dev, sizeof(*tp->rx_buf), GFP_KERNEL);
 	if (!tp->rx_buf)
 		return -ENOMEM;
 
@@ -504,7 +506,7 @@ static int vsc_tp_probe(struct spi_device *spi)
 	if (ret)
 		return ret;
 
-	tp->wakeuphost = devm_gpiod_get(dev, "wakeuphost", GPIOD_IN);
+	tp->wakeuphost = devm_gpiod_get(dev, "wakeuphostint", GPIOD_IN);
 	if (IS_ERR(tp->wakeuphost))
 		return PTR_ERR(tp->wakeuphost);
 

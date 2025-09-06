@@ -12,6 +12,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
+#include <linux/types.h>
 #include <linux/iio/buffer.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
@@ -94,7 +95,7 @@ struct stk8ba50_data {
 	/* Ensure timestamp is naturally aligned */
 	struct {
 		s16 chans[3];
-		s64 timetamp __aligned(8);
+		aligned_s64 timetamp;
 	} scan;
 };
 
@@ -339,8 +340,8 @@ static irqreturn_t stk8ba50_trigger_handler(int irq, void *p)
 			data->scan.chans[i++] = ret;
 		}
 	}
-	iio_push_to_buffers_with_timestamp(indio_dev, &data->scan,
-					   pf->timestamp);
+	iio_push_to_buffers_with_ts(indio_dev, &data->scan, sizeof(data->scan),
+				    pf->timestamp);
 err:
 	mutex_unlock(&data->lock);
 	iio_trigger_notify_done(indio_dev->trig);
@@ -525,13 +526,13 @@ static DEFINE_SIMPLE_DEV_PM_OPS(stk8ba50_pm_ops, stk8ba50_suspend,
 
 static const struct i2c_device_id stk8ba50_i2c_id[] = {
 	{ "stk8ba50" },
-	{}
+	{ }
 };
 MODULE_DEVICE_TABLE(i2c, stk8ba50_i2c_id);
 
 static const struct acpi_device_id stk8ba50_acpi_id[] = {
 	{"STK8BA50", 0},
-	{}
+	{ }
 };
 
 MODULE_DEVICE_TABLE(acpi, stk8ba50_acpi_id);

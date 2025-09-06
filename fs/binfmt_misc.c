@@ -247,10 +247,13 @@ static int load_misc_binary(struct linux_binprm *bprm)
 	if (retval < 0)
 		goto ret;
 
-	if (fmt->flags & MISC_FMT_OPEN_FILE)
+	if (fmt->flags & MISC_FMT_OPEN_FILE) {
 		interp_file = file_clone_open(fmt->interp_file);
-	else
+		if (!IS_ERR(interp_file))
+			deny_write_access(interp_file);
+	} else {
 		interp_file = open_exec(fmt->interpreter);
+	}
 	retval = PTR_ERR(interp_file);
 	if (IS_ERR(interp_file))
 		goto ret;
@@ -839,7 +842,7 @@ static ssize_t bm_register_write(struct file *file, const char __user *buffer,
 	}
 
 	inode_lock(d_inode(root));
-	dentry = lookup_one_len(e->name, root, strlen(e->name));
+	dentry = lookup_noperm(&QSTR(e->name), root);
 	err = PTR_ERR(dentry);
 	if (IS_ERR(dentry))
 		goto out;
@@ -998,7 +1001,7 @@ static int bm_fill_super(struct super_block *sb, struct fs_context *fc)
 		/*
 		 * If it turns out that most user namespaces actually want to
 		 * register their own binary type handler and therefore all
-		 * create their own separate binfm_misc mounts we should
+		 * create their own separate binfmt_misc mounts we should
 		 * consider turning this into a kmem cache.
 		 */
 		misc = kzalloc(sizeof(struct binfmt_misc), GFP_KERNEL);

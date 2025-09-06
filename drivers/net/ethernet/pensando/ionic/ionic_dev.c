@@ -13,7 +13,7 @@
 
 static void ionic_watchdog_cb(struct timer_list *t)
 {
-	struct ionic *ionic = from_timer(ionic, t, watchdog_timer);
+	struct ionic *ionic = timer_container_of(ionic, t, watchdog_timer);
 	struct ionic_lif *lif = ionic->lif;
 	struct ionic_deferred_work *work;
 	int hb;
@@ -277,7 +277,10 @@ void ionic_dev_teardown(struct ionic *ionic)
 	idev->phy_cmb_pages = 0;
 	idev->cmb_npages = 0;
 
-	destroy_workqueue(ionic->wq);
+	if (ionic->wq) {
+		destroy_workqueue(ionic->wq);
+		ionic->wq = NULL;
+	}
 	mutex_destroy(&idev->cmb_inuse_lock);
 }
 

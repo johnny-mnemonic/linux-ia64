@@ -2178,8 +2178,6 @@ fail:
 /**
  * xudc_remove - Releases the resources allocated during the initialization.
  * @pdev: pointer to the platform device structure.
- *
- * Return: 0 always
  */
 static void xudc_remove(struct platform_device *pdev)
 {
@@ -2258,7 +2256,7 @@ static struct platform_driver xudc_driver = {
 		.pm	= &xudc_pm_ops,
 	},
 	.probe = xudc_probe,
-	.remove_new = xudc_remove,
+	.remove = xudc_remove,
 };
 
 module_platform_driver(xudc_driver);

@@ -19,6 +19,7 @@
 #include "util/string2.h"
 #include "util/strlist.h"
 #include "util/strbuf.h"
+#include "util/tool_pmu.h"
 #include <subcmd/pager.h>
 #include <subcmd/parse-options.h>
 #include <linux/zalloc.h>
@@ -112,7 +113,7 @@ static void wordwrap(FILE *fp, const char *s, int start, int max, int corr)
 	}
 }
 
-static void default_print_event(void *ps, const char *pmu_name, const char *topic,
+static void default_print_event(void *ps, const char *topic, const char *pmu_name,
 				const char *event_name, const char *event_alias,
 				const char *scale_unit __maybe_unused,
 				bool deprecated, const char *event_type_desc,
@@ -162,11 +163,10 @@ static void default_print_event(void *ps, const char *pmu_name, const char *topi
 	} else
 		fputc('\n', fp);
 
-	if (long_desc && print_state->long_desc) {
-		fprintf(fp, "%*s", 8, "[");
-		wordwrap(fp, long_desc, 8, pager_get_columns(), 0);
-		fprintf(fp, "]\n");
-	} else if (desc && print_state->desc) {
+	if (long_desc && print_state->long_desc)
+		desc = long_desc;
+
+	if (desc && (print_state->desc || print_state->long_desc)) {
 		char *desc_with_unit = NULL;
 		int desc_len = -1;
 
@@ -197,7 +197,8 @@ static void default_print_metric(void *ps,
 				const char *long_desc,
 				const char *expr,
 				const char *threshold,
-				const char *unit __maybe_unused)
+				const char *unit __maybe_unused,
+				const char *pmu_name __maybe_unused)
 {
 	struct print_state *print_state = ps;
 	FILE *fp = print_state->fp;
@@ -353,7 +354,7 @@ static void fix_escape_fprintf(FILE *fp, struct strbuf *buf, const char *fmt, ..
 	fputs(buf->buf, fp);
 }
 
-static void json_print_event(void *ps, const char *pmu_name, const char *topic,
+static void json_print_event(void *ps, const char *topic, const char *pmu_name,
 			     const char *event_name, const char *event_alias,
 			     const char *scale_unit,
 			     bool deprecated, const char *event_type_desc,
@@ -433,7 +434,8 @@ static void json_print_event(void *ps, const char *pmu_name, const char *topic,
 static void json_print_metric(void *ps __maybe_unused, const char *group,
 			      const char *name, const char *desc,
 			      const char *long_desc, const char *expr,
-			      const char *threshold, const char *unit)
+			      const char *threshold, const char *unit,
+			      const char *pmu_name)
 {
 	struct json_print_state *print_state = ps;
 	bool need_sep = false;
@@ -483,6 +485,12 @@ static void json_print_metric(void *ps __maybe_unused, const char *group,
 				   long_desc);
 		need_sep = true;
 	}
+	if (pmu_name) {
+		fix_escape_fprintf(fp, &buf, "%s\t\"Unit\": \"%S\"",
+				   need_sep ? ",\n" : "",
+				   pmu_name);
+		need_sep = true;
+	}
 	fprintf(fp, "%s}", need_sep ? "\n" : "");
 	strbuf_release(&buf);
 }
@@ -527,7 +535,7 @@ int cmd_list(int argc, const char **argv)
 		OPT_BOOLEAN('d', "desc", &default_ps.desc,
 			    "Print extra event descriptions. --no-desc to not print."),
 		OPT_BOOLEAN('v', "long-desc", &default_ps.long_desc,
-			    "Print longer event descriptions."),
+			    "Print longer event descriptions and all similar PMUs with alphanumeric suffixes."),
 		OPT_BOOLEAN(0, "details", &default_ps.detailed,
 			    "Print information on the perf event names and expressions used internally by events."),
 		OPT_STRING('o', "output", &output_path, "file", "output file name"),
@@ -614,9 +622,18 @@ int cmd_list(int argc, const char **argv)
 					event_symbols_hw, PERF_COUNT_HW_MAX);
 		else if (strcmp(argv[i], "sw") == 0 ||
 			 strcmp(argv[i], "software") == 0) {
+			char *old_pmu_glob = default_ps.pmu_glob;
+
 			print_symbol_events(&print_cb, ps, PERF_TYPE_SOFTWARE,
 					event_symbols_sw, PERF_COUNT_SW_MAX);
-			print_tool_events(&print_cb, ps);
+			default_ps.pmu_glob = strdup("tool");
+			if (!default_ps.pmu_glob) {
+				ret = -1;
+				goto out;
+			}
+			perf_pmus__print_pmu_events(&print_cb, ps);
+			zfree(&default_ps.pmu_glob);
+			default_ps.pmu_glob = old_pmu_glob;
 		} else if (strcmp(argv[i], "cache") == 0 ||
 			 strcmp(argv[i], "hwcache") == 0)
 			print_hwcache_events(&print_cb, ps);
@@ -664,7 +681,6 @@ int cmd_list(int argc, const char **argv)
 					event_symbols_hw, PERF_COUNT_HW_MAX);
 			print_symbol_events(&print_cb, ps, PERF_TYPE_SOFTWARE,
 					event_symbols_sw, PERF_COUNT_SW_MAX);
-			print_tool_events(&print_cb, ps);
 			print_hwcache_events(&print_cb, ps);
 			perf_pmus__print_pmu_events(&print_cb, ps);
 			print_tracepoint_events(&print_cb, ps);

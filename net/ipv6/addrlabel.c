@@ -473,12 +473,12 @@ static int ip6addrlbl_valid_dump_req(const struct nlmsghdr *nlh,
 {
 	struct ifaddrlblmsg *ifal;
 
-	if (nlh->nlmsg_len < nlmsg_msg_size(sizeof(*ifal))) {
+	ifal = nlmsg_payload(nlh, sizeof(*ifal));
+	if (!ifal) {
 		NL_SET_ERR_MSG_MOD(extack, "Invalid header for address label dump request");
 		return -EINVAL;
 	}
 
-	ifal = nlmsg_data(nlh);
 	if (ifal->__ifal_reserved || ifal->ifal_prefixlen ||
 	    ifal->ifal_flags || ifal->ifal_index || ifal->ifal_seq) {
 		NL_SET_ERR_MSG_MOD(extack, "Invalid values in header for address label dump request");
@@ -543,7 +543,8 @@ static int ip6addrlbl_valid_get_req(struct sk_buff *skb,
 	struct ifaddrlblmsg *ifal;
 	int i, err;
 
-	if (nlh->nlmsg_len < nlmsg_msg_size(sizeof(*ifal))) {
+	ifal = nlmsg_payload(nlh, sizeof(*ifal));
+	if (!ifal) {
 		NL_SET_ERR_MSG_MOD(extack, "Invalid header for addrlabel get request");
 		return -EINVAL;
 	}
@@ -552,7 +553,6 @@ static int ip6addrlbl_valid_get_req(struct sk_buff *skb,
 		return nlmsg_parse_deprecated(nlh, sizeof(*ifal), tb,
 					      IFAL_MAX, ifal_policy, extack);
 
-	ifal = nlmsg_data(nlh);
 	if (ifal->__ifal_reserved || ifal->ifal_flags || ifal->ifal_seq) {
 		NL_SET_ERR_MSG_MOD(extack, "Invalid values in header for addrlabel get request");
 		return -EINVAL;
@@ -634,23 +634,17 @@ static int ip6addrlbl_get(struct sk_buff *in_skb, struct nlmsghdr *nlh,
 	return err;
 }
 
+static const struct rtnl_msg_handler ipv6_adddr_label_rtnl_msg_handlers[] __initconst_or_module = {
+	{.owner = THIS_MODULE, .protocol = PF_INET6, .msgtype = RTM_NEWADDRLABEL,
+	 .doit = ip6addrlbl_newdel, .flags = RTNL_FLAG_DOIT_UNLOCKED},
+	{.owner = THIS_MODULE, .protocol = PF_INET6, .msgtype = RTM_DELADDRLABEL,
+	 .doit = ip6addrlbl_newdel, .flags = RTNL_FLAG_DOIT_UNLOCKED},
+	{.owner = THIS_MODULE, .protocol = PF_INET6, .msgtype = RTM_GETADDRLABEL,
+	 .doit = ip6addrlbl_get, .dumpit = ip6addrlbl_dump,
+	 .flags = RTNL_FLAG_DOIT_UNLOCKED | RTNL_FLAG_DUMP_UNLOCKED},
+};
+
 int __init ipv6_addr_label_rtnl_register(void)
 {
-	int ret;
-
-	ret = rtnl_register_module(THIS_MODULE, PF_INET6, RTM_NEWADDRLABEL,
-				   ip6addrlbl_newdel,
-				   NULL, RTNL_FLAG_DOIT_UNLOCKED);
-	if (ret < 0)
-		return ret;
-	ret = rtnl_register_module(THIS_MODULE, PF_INET6, RTM_DELADDRLABEL,
-				   ip6addrlbl_newdel,
-				   NULL, RTNL_FLAG_DOIT_UNLOCKED);
-	if (ret < 0)
-		return ret;
-	ret = rtnl_register_module(THIS_MODULE, PF_INET6, RTM_GETADDRLABEL,
-				   ip6addrlbl_get,
-				   ip6addrlbl_dump, RTNL_FLAG_DOIT_UNLOCKED |
-						    RTNL_FLAG_DUMP_UNLOCKED);
-	return ret;
+	return rtnl_register_many(ipv6_adddr_label_rtnl_msg_handlers);
 }

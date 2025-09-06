@@ -314,6 +314,7 @@ void hdmi4_core_disable(struct hdmi_core_data *core)
  */
 
 static int hdmi4_bridge_attach(struct drm_bridge *bridge,
+			       struct drm_encoder *encoder,
 			       enum drm_bridge_attach_flags flags)
 {
 	struct omap_hdmi *hdmi = drm_bridge_to_hdmi(bridge);
@@ -321,7 +322,7 @@ static int hdmi4_bridge_attach(struct drm_bridge *bridge,
 	if (!(flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR))
 		return -EINVAL;
 
-	return drm_bridge_attach(bridge->encoder, hdmi->output.next_bridge,
+	return drm_bridge_attach(encoder, hdmi->output.next_bridge,
 				 bridge, flags);
 }
 
@@ -341,10 +342,9 @@ static void hdmi4_bridge_mode_set(struct drm_bridge *bridge,
 }
 
 static void hdmi4_bridge_enable(struct drm_bridge *bridge,
-				struct drm_bridge_state *bridge_state)
+				struct drm_atomic_state *state)
 {
 	struct omap_hdmi *hdmi = drm_bridge_to_hdmi(bridge);
-	struct drm_atomic_state *state = bridge_state->base.state;
 	struct drm_connector_state *conn_state;
 	struct drm_connector *connector;
 	struct drm_crtc_state *crtc_state;
@@ -410,7 +410,7 @@ done:
 }
 
 static void hdmi4_bridge_disable(struct drm_bridge *bridge,
-				 struct drm_bridge_state *bridge_state)
+				 struct drm_atomic_state *state)
 {
 	struct omap_hdmi *hdmi = drm_bridge_to_hdmi(bridge);
 	unsigned long flags;
@@ -852,7 +852,7 @@ static const struct of_device_id hdmi_of_match[] = {
 
 struct platform_driver omapdss_hdmi4hw_driver = {
 	.probe		= hdmi4_probe,
-	.remove_new	= hdmi4_remove,
+	.remove		= hdmi4_remove,
 	.driver         = {
 		.name   = "omapdss_hdmi",
 		.of_match_table = hdmi_of_match,

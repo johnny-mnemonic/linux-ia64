@@ -146,6 +146,12 @@
 #define SCM_DEVMEM_DMABUF	SO_DEVMEM_DMABUF
 #define SO_DEVMEM_DONTNEED	80
 
+#define SCM_TS_OPT_ID		81
+
+#define SO_RCVPRIORITY		82
+
+#define SO_PASSRIGHTS		83
+
 #if !defined(__KERNEL__)
 
 #if __BITS_PER_LONG == 64

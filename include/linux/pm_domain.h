@@ -30,9 +30,16 @@
  *				supplier and its PM domain when creating the
  *				device-links.
  *
+ * PD_FLAG_REQUIRED_OPP:	Assign required_devs for the required OPPs. The
+ *				index of the required OPP must correspond to the
+ *				index in the array of the pd_names. If pd_names
+ *				isn't specified, the index just follows the
+ *				index for the attached PM domain.
+ *
  */
 #define PD_FLAG_NO_DEV_LINK		BIT(0)
 #define PD_FLAG_DEV_LINK_ON		BIT(1)
+#define PD_FLAG_REQUIRED_OPP		BIT(2)
 
 struct dev_pm_domain_attach_data {
 	const char * const *pd_names;
@@ -43,6 +50,7 @@ struct dev_pm_domain_attach_data {
 struct dev_pm_domain_list {
 	struct device **pd_devs;
 	struct device_link **pd_links;
+	u32 *opp_tokens;
 	u32 num_pds;
 };
 
@@ -134,16 +142,21 @@ struct genpd_governor_data {
 	bool max_off_time_changed;
 	ktime_t next_wakeup;
 	ktime_t next_hrtimer;
+	ktime_t last_enter;
+	bool reflect_residency;
 	bool cached_power_down_ok;
 	bool cached_power_down_state_idx;
 };
 
 struct genpd_power_state {
+	const char *name;
 	s64 power_off_latency_ns;
 	s64 power_on_latency_ns;
 	s64 residency_ns;
 	u64 usage;
 	u64 rejected;
+	u64 above;
+	u64 below;
 	struct fwnode_handle *fwnode;
 	u64 idle_time;
 	void *data;
@@ -250,7 +263,9 @@ struct generic_pm_domain_data {
 	unsigned int performance_state;
 	unsigned int default_pstate;
 	unsigned int rpm_pstate;
+	unsigned int opp_token;
 	bool hw_mode;
+	bool rpm_always_on;
 	void *data;
 };
 
@@ -274,6 +289,8 @@ int pm_genpd_remove_subdomain(struct generic_pm_domain *genpd,
 int pm_genpd_init(struct generic_pm_domain *genpd,
 		  struct dev_power_governor *gov, bool is_off);
 int pm_genpd_remove(struct generic_pm_domain *genpd);
+void pm_genpd_inc_rejected(struct generic_pm_domain *genpd,
+			   unsigned int state_idx);
 struct device *dev_to_genpd_dev(struct device *dev);
 int dev_pm_genpd_set_performance_state(struct device *dev, unsigned int state);
 int dev_pm_genpd_add_notifier(struct device *dev, struct notifier_block *nb);
@@ -283,6 +300,7 @@ ktime_t dev_pm_genpd_get_next_hrtimer(struct device *dev);
 void dev_pm_genpd_synced_poweroff(struct device *dev);
 int dev_pm_genpd_set_hwmode(struct device *dev, bool enable);
 bool dev_pm_genpd_get_hwmode(struct device *dev);
+int dev_pm_genpd_rpm_always_on(struct device *dev, bool on);
 
 extern struct dev_power_governor simple_qos_governor;
 extern struct dev_power_governor pm_domain_always_on_gov;
@@ -324,6 +342,10 @@ static inline int pm_genpd_remove(struct generic_pm_domain *genpd)
 	return -EOPNOTSUPP;
 }
 
+static inline void pm_genpd_inc_rejected(struct generic_pm_domain *genpd,
+					 unsigned int state_idx)
+{ }
+
 static inline struct device *dev_to_genpd_dev(struct device *dev)
 {
 	return ERR_PTR(-EOPNOTSUPP);
@@ -364,6 +386,11 @@ static inline int dev_pm_genpd_set_hwmode(struct device *dev, bool enable)
 static inline bool dev_pm_genpd_get_hwmode(struct device *dev)
 {
 	return false;
+}
+
+static inline int dev_pm_genpd_rpm_always_on(struct device *dev, bool on)
+{
+	return -EOPNOTSUPP;
 }
 
 #define simple_qos_governor		(*(struct dev_power_governor *)(NULL))

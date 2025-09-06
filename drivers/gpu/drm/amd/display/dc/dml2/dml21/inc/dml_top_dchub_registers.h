@@ -88,6 +88,7 @@ struct dml2_display_arb_regs {
 	uint32_t sdpif_request_rate_limit;
 	uint32_t allow_sdpif_rate_limit_when_cstate_req;
 	uint32_t dcfclk_deep_sleep_hysteresis;
+	uint32_t pstate_stall_threshold;
 };
 
 struct dml2_cursor_dlg_regs{
@@ -155,6 +156,8 @@ struct dml2_dchub_watermark_regs {
 	uint32_t urgent;
 	uint32_t sr_enter;
 	uint32_t sr_exit;
+	uint32_t sr_enter_z8;
+	uint32_t sr_exit_z8;
 	uint32_t uclk_pstate;
 	uint32_t fclk_pstate;
 	uint32_t temp_read_or_ppt;

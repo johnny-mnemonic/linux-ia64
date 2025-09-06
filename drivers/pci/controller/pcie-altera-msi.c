@@ -164,9 +164,9 @@ static const struct irq_domain_ops msi_domain_ops = {
 
 static int altera_allocate_domains(struct altera_msi *msi)
 {
-	struct fwnode_handle *fwnode = of_node_to_fwnode(msi->pdev->dev.of_node);
+	struct fwnode_handle *fwnode = of_fwnode_handle(msi->pdev->dev.of_node);
 
-	msi->inner_domain = irq_domain_add_linear(NULL, msi->num_of_vectors,
+	msi->inner_domain = irq_domain_create_linear(NULL, msi->num_of_vectors,
 					     &msi_domain_ops, msi);
 	if (!msi->inner_domain) {
 		dev_err(&msi->pdev->dev, "failed to create IRQ domain\n");
@@ -267,7 +267,7 @@ static struct platform_driver altera_msi_driver = {
 		.of_match_table = altera_msi_of_match,
 	},
 	.probe = altera_msi_probe,
-	.remove_new = altera_msi_remove,
+	.remove = altera_msi_remove,
 };
 
 static int __init altera_msi_init(void)

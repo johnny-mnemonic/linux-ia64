@@ -43,7 +43,7 @@ enum TRI_STATE {
  * size beyond this value gets rejected by __alloc_page() call.
  */
 #define MAX_RX_BUFFERS_PER_QUEUE 8192
-#define DEF_RX_BUFFERS_PER_QUEUE 512
+#define DEF_RX_BUFFERS_PER_QUEUE 1024
 #define MIN_RX_BUFFERS_PER_QUEUE 128
 
 /* This max value for TX buffers is derived as the maximum allocatable
@@ -350,6 +350,7 @@ struct mana_rxq {
 	int xdp_rc; /* XDP redirect return code */
 
 	struct page_pool *page_pool;
+	struct dentry *mana_rx_debugfs;
 
 	/* MUST BE THE LAST MEMBER:
 	 * Each receive buffer has an associated mana_recv_buf_oob.
@@ -363,6 +364,8 @@ struct mana_tx_qp {
 	struct mana_cq tx_cq;
 
 	mana_handle_t tx_object;
+
+	struct dentry *mana_tx_debugfs;
 };
 
 struct mana_ethtool_stats {
@@ -405,8 +408,10 @@ struct mana_context {
 	struct gdma_dev *gdma_dev;
 
 	u16 num_ports;
+	u8 bm_hostmode;
 
 	struct mana_eq *eqs;
+	struct dentry *mana_eqs_debugfs;
 
 	struct net_device *ports[MAX_PORTS_IN_MANA_DEV];
 };
@@ -468,6 +473,9 @@ struct mana_port_context {
 	bool port_st_save; /* Saved port state */
 
 	struct mana_ethtool_stats eth_stats;
+
+	/* Debugfs */
+	struct dentry *mana_port_debugfs;
 };
 
 netdev_tx_t mana_start_xmit(struct sk_buff *skb, struct net_device *ndev);
@@ -480,6 +488,9 @@ int mana_detach(struct net_device *ndev, bool from_close);
 
 int mana_probe(struct gdma_dev *gd, bool resuming);
 void mana_remove(struct gdma_dev *gd, bool suspending);
+
+int mana_rdma_probe(struct gdma_dev *gd);
+void mana_rdma_remove(struct gdma_dev *gd);
 
 void mana_xdp_tx(struct sk_buff *skb, struct net_device *ndev);
 int mana_xdp_xmit(struct net_device *ndev, int n, struct xdp_frame **frames,
@@ -494,6 +505,7 @@ int mana_pre_alloc_rxbufs(struct mana_port_context *apc, int mtu, int num_queues
 void mana_pre_dealloc_rxbufs(struct mana_port_context *apc);
 
 extern const struct ethtool_ops mana_ethtool_ops;
+extern struct dentry *mana_debugfs_root;
 
 /* A CQ can be created not associated with any EQ */
 #define GDMA_CQ_NO_EQ  0xffff
@@ -549,7 +561,8 @@ struct mana_query_device_cfg_resp {
 	u64 pf_cap_flags4;
 
 	u16 max_num_vports;
-	u16 reserved;
+	u8 bm_hostmode; /* response v3: Bare Metal Host Mode */
+	u8 reserved;
 	u32 max_num_eqs;
 
 	/* response v2: */
@@ -819,5 +832,7 @@ int mana_cfg_vport(struct mana_port_context *apc, u32 protection_dom_id,
 		   u32 doorbell_pg_id);
 void mana_uncfg_vport(struct mana_port_context *apc);
 
-struct net_device *mana_get_primary_netdev_rcu(struct mana_context *ac, u32 port_index);
+struct net_device *mana_get_primary_netdev(struct mana_context *ac,
+					   u32 port_index,
+					   netdevice_tracker *tracker);
 #endif /* _MANA_H */

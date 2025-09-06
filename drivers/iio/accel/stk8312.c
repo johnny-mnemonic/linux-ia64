@@ -12,6 +12,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/delay.h>
+#include <linux/types.h>
 #include <linux/iio/buffer.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
@@ -105,7 +106,7 @@ struct stk8312_data {
 	/* Ensure timestamp is naturally aligned */
 	struct {
 		s8 chans[3];
-		s64 timestamp __aligned(8);
+		aligned_s64 timestamp;
 	} scan;
 };
 
@@ -459,8 +460,8 @@ static irqreturn_t stk8312_trigger_handler(int irq, void *p)
 	}
 	mutex_unlock(&data->lock);
 
-	iio_push_to_buffers_with_timestamp(indio_dev, &data->scan,
-					   pf->timestamp);
+	iio_push_to_buffers_with_ts(indio_dev, &data->scan, sizeof(data->scan),
+				    pf->timestamp);
 err:
 	iio_trigger_notify_done(indio_dev->trig);
 
@@ -634,7 +635,7 @@ static const struct i2c_device_id stk8312_i2c_id[] = {
 	/* Deprecated in favour of lowercase form */
 	{ "STK8312" },
 	{ "stk8312" },
-	{}
+	{ }
 };
 MODULE_DEVICE_TABLE(i2c, stk8312_i2c_id);
 

@@ -22,8 +22,12 @@
 #include <linux/minmax.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/of_platform.h>
+#include <linux/pwm.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
+
+#include <dt-bindings/pwm/pwm.h>
 
 /*
  * Addresses to scan.
@@ -36,7 +40,7 @@ static const unsigned short normal_i2c[] = {0x18, 0x19, 0x1a, 0x2c, 0x2d, 0x2e,
  * Insmod parameters
  */
 
-static int pwminv;	/*Inverted PWM output. */
+static int pwminv = -1; /*Inverted PWM output. */
 module_param(pwminv, int, 0444);
 
 static int init = 1; /*Power-on initialization.*/
@@ -844,9 +848,43 @@ static int amc6821_detect(struct i2c_client *client, struct i2c_board_info *info
 	return 0;
 }
 
-static int amc6821_init_client(struct amc6821_data *data)
+static enum pwm_polarity amc6821_pwm_polarity(struct i2c_client *client)
+{
+	enum pwm_polarity polarity = PWM_POLARITY_NORMAL;
+	struct of_phandle_args args;
+	struct device_node *fan_np;
+
+	/*
+	 * For backward compatibility, the pwminv module parameter takes
+	 * always the precedence over any other device description
+	 */
+	if (pwminv == 0)
+		return PWM_POLARITY_NORMAL;
+	if (pwminv > 0)
+		return PWM_POLARITY_INVERSED;
+
+	fan_np = of_get_child_by_name(client->dev.of_node, "fan");
+	if (!fan_np)
+		return PWM_POLARITY_NORMAL;
+
+	if (of_parse_phandle_with_args(fan_np, "pwms", "#pwm-cells", 0, &args))
+		goto out;
+	of_node_put(args.np);
+
+	if (args.args_count != 2)
+		goto out;
+
+	if (args.args[1] & PWM_POLARITY_INVERTED)
+		polarity = PWM_POLARITY_INVERSED;
+out:
+	of_node_put(fan_np);
+	return polarity;
+}
+
+static int amc6821_init_client(struct i2c_client *client, struct amc6821_data *data)
 {
 	struct regmap *regmap = data->regmap;
+	u32 regval;
 	int err;
 
 	if (init) {
@@ -863,11 +901,14 @@ static int amc6821_init_client(struct amc6821_data *data)
 		if (err)
 			return err;
 
+		regval = AMC6821_CONF1_START;
+		if (amc6821_pwm_polarity(client) == PWM_POLARITY_INVERSED)
+			regval |= AMC6821_CONF1_PWMINV;
+
 		err = regmap_update_bits(regmap, AMC6821_REG_CONF1,
 					 AMC6821_CONF1_THERMOVIE | AMC6821_CONF1_FANIE |
 					 AMC6821_CONF1_START | AMC6821_CONF1_PWMINV,
-					 AMC6821_CONF1_START |
-					 (pwminv ? AMC6821_CONF1_PWMINV : 0));
+					 regval);
 		if (err)
 			return err;
 	}
@@ -893,7 +934,6 @@ static bool amc6821_volatile_reg(struct device *dev, unsigned int reg)
 static const struct regmap_config amc6821_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
-	.max_register = AMC6821_REG_CONF3,
 	.volatile_reg = amc6821_volatile_reg,
 	.cache_type = REGCACHE_MAPLE,
 };
@@ -916,9 +956,16 @@ static int amc6821_probe(struct i2c_client *client)
 				     "Failed to initialize regmap\n");
 	data->regmap = regmap;
 
-	err = amc6821_init_client(data);
+	err = amc6821_init_client(client, data);
 	if (err)
 		return err;
+
+	if (of_device_is_compatible(dev->of_node, "tsd,mule")) {
+		err = devm_of_platform_populate(dev);
+		if (err)
+			return dev_err_probe(dev, err,
+				     "Failed to create sub-devices\n");
+	}
 
 	hwmon_dev = devm_hwmon_device_register_with_info(dev, client->name,
 							 data, &amc6821_chip_info,
@@ -927,7 +974,7 @@ static int amc6821_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id amc6821_id[] = {
-	{ "amc6821", 0 },
+	{ "amc6821" },
 	{ }
 };
 
@@ -936,6 +983,9 @@ MODULE_DEVICE_TABLE(i2c, amc6821_id);
 static const struct of_device_id __maybe_unused amc6821_of_match[] = {
 	{
 		.compatible = "ti,amc6821",
+	},
+	{
+		.compatible = "tsd,mule",
 	},
 	{ }
 };

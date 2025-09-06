@@ -165,7 +165,7 @@ static const struct iio_chan_spec_ext_info stk3310_ext_info[] = {
 		.shared = IIO_SEPARATE,
 		.read = stk3310_read_near_level,
 	},
-	{ /* sentinel */ }
+	{ }
 };
 
 static const struct iio_chan_spec stk3310_channels[] = {
@@ -324,14 +324,11 @@ static int stk3310_write_event_config(struct iio_dev *indio_dev,
 				      const struct iio_chan_spec *chan,
 				      enum iio_event_type type,
 				      enum iio_event_direction dir,
-				      int state)
+				      bool state)
 {
 	int ret;
 	struct stk3310_data *data = iio_priv(indio_dev);
 	struct i2c_client *client = data->client;
-
-	if (state < 0 || state > 7)
-		return -EINVAL;
 
 	/* Set INT_PS value */
 	mutex_lock(&data->lock);
@@ -706,7 +703,7 @@ static const struct i2c_device_id stk3310_i2c_id[] = {
 	{ "STK3310" },
 	{ "STK3311" },
 	{ "STK3335" },
-	{}
+	{ }
 };
 MODULE_DEVICE_TABLE(i2c, stk3310_i2c_id);
 
@@ -714,7 +711,7 @@ static const struct acpi_device_id stk3310_acpi_id[] = {
 	{"STK3013", 0},
 	{"STK3310", 0},
 	{"STK3311", 0},
-	{}
+	{ }
 };
 
 MODULE_DEVICE_TABLE(acpi, stk3310_acpi_id);
@@ -724,7 +721,7 @@ static const struct of_device_id stk3310_of_match[] = {
 	{ .compatible = "sensortek,stk3310", },
 	{ .compatible = "sensortek,stk3311", },
 	{ .compatible = "sensortek,stk3335", },
-	{}
+	{ }
 };
 MODULE_DEVICE_TABLE(of, stk3310_of_match);
 

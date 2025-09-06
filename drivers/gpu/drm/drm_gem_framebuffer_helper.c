@@ -18,7 +18,7 @@
 
 #include "drm_internal.h"
 
-MODULE_IMPORT_NS(DMA_BUF);
+MODULE_IMPORT_NS("DMA_BUF");
 
 #define AFBC_HEADER_SIZE		16
 #define AFBC_TH_LAYOUT_ALIGNMENT	8
@@ -362,7 +362,7 @@ int drm_gem_fb_vmap(struct drm_framebuffer *fb, struct iosys_map *map,
 			ret = -EINVAL;
 			goto err_drm_gem_vunmap;
 		}
-		ret = drm_gem_vmap_unlocked(obj, &map[i]);
+		ret = drm_gem_vmap(obj, &map[i]);
 		if (ret)
 			goto err_drm_gem_vunmap;
 	}
@@ -384,7 +384,7 @@ err_drm_gem_vunmap:
 		obj = drm_gem_fb_get_obj(fb, i);
 		if (!obj)
 			continue;
-		drm_gem_vunmap_unlocked(obj, &map[i]);
+		drm_gem_vunmap(obj, &map[i]);
 	}
 	return ret;
 }
@@ -411,7 +411,7 @@ void drm_gem_fb_vunmap(struct drm_framebuffer *fb, struct iosys_map *map)
 			continue;
 		if (iosys_map_is_null(&map[i]))
 			continue;
-		drm_gem_vunmap_unlocked(obj, &map[i]);
+		drm_gem_vunmap(obj, &map[i]);
 	}
 }
 EXPORT_SYMBOL(drm_gem_fb_vunmap);
@@ -429,7 +429,7 @@ static void __drm_gem_fb_end_cpu_access(struct drm_framebuffer *fb, enum dma_dat
 		if (!obj)
 			continue;
 		import_attach = obj->import_attach;
-		if (!import_attach)
+		if (!drm_gem_is_imported(obj))
 			continue;
 		ret = dma_buf_end_cpu_access(import_attach->dmabuf, dir);
 		if (ret)
@@ -466,7 +466,7 @@ int drm_gem_fb_begin_cpu_access(struct drm_framebuffer *fb, enum dma_data_direct
 			goto err___drm_gem_fb_end_cpu_access;
 		}
 		import_attach = obj->import_attach;
-		if (!import_attach)
+		if (!drm_gem_is_imported(obj))
 			continue;
 		ret = dma_buf_begin_cpu_access(import_attach->dmabuf, dir);
 		if (ret)

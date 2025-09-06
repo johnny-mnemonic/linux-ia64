@@ -458,6 +458,7 @@ struct xlog {
 #define XLOG_IO_ERROR		2	/* log hit an I/O error, and being
 				   shutdown */
 #define XLOG_TAIL_WARN		3	/* log tail verify warning issued */
+#define XLOG_SHUTDOWN_STARTED	4	/* xlog_force_shutdown() exclusion */
 
 static inline bool
 xlog_recovery_needed(struct xlog *log)
@@ -695,6 +696,19 @@ xlog_kvmalloc(
 	} while (!p);
 
 	return p;
+}
+
+/*
+ * Given a count of iovecs and space for a log item, compute the space we need
+ * in the log to store that data plus the log headers.
+ */
+static inline unsigned int
+xlog_item_space(
+	unsigned int	niovecs,
+	unsigned int	nbytes)
+{
+	nbytes += niovecs * (sizeof(uint64_t) + sizeof(struct xlog_op_header));
+	return round_up(nbytes, sizeof(uint64_t));
 }
 
 #endif	/* __XFS_LOG_PRIV_H__ */

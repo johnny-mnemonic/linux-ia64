@@ -10,7 +10,6 @@
 #include <linux/pkeys.h>
 #include <linux/debugfs.h>
 #include <linux/proc_fs.h>
-#include <misc/cxl-base.h>
 
 #include <asm/pgalloc.h>
 #include <asm/tlb.h>
@@ -36,6 +35,19 @@ unsigned long __pmd_frag_nr;
 EXPORT_SYMBOL(__pmd_frag_nr);
 unsigned long __pmd_frag_size_shift;
 EXPORT_SYMBOL(__pmd_frag_size_shift);
+
+#ifdef CONFIG_KFENCE
+extern bool kfence_early_init;
+static int __init parse_kfence_early_init(char *arg)
+{
+	int val;
+
+	if (get_option(&arg, &val))
+		kfence_early_init = !!val;
+	return 0;
+}
+early_param("kfence.sample_interval", parse_kfence_early_init);
+#endif
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 /*
@@ -257,11 +269,6 @@ pud_t pfn_pud(unsigned long pfn, pgprot_t pgprot)
 	return __pud_mkhuge(pud_set_protbits(__pud(pudv), pgprot));
 }
 
-pmd_t mk_pmd(struct page *page, pgprot_t pgprot)
-{
-	return pfn_pmd(page_to_pfn(page), pgprot);
-}
-
 pmd_t pmd_modify(pmd_t pmd, pgprot_t newprot)
 {
 	unsigned long pmdv;
@@ -317,11 +324,7 @@ void __init mmu_partition_table_init(void)
 	unsigned long ptcr;
 
 	/* Initialize the Partition Table with no entries */
-	partition_tb = memblock_alloc(patb_size, patb_size);
-	if (!partition_tb)
-		panic("%s: Failed to allocate %lu bytes align=0x%lx\n",
-		      __func__, patb_size, patb_size);
-
+	partition_tb = memblock_alloc_or_panic(patb_size, patb_size);
 	ptcr = __pa(partition_tb) | (PATB_SIZE_SHIFT - 12);
 	set_ptcr_when_no_uv(ptcr);
 	powernv_set_nmmu_ptcr(ptcr);
@@ -414,7 +417,7 @@ static pmd_t *__alloc_for_pmdcache(struct mm_struct *mm)
 	ptdesc = pagetable_alloc(gfp, 0);
 	if (!ptdesc)
 		return NULL;
-	if (!pagetable_pmd_ctor(ptdesc)) {
+	if (!pagetable_pmd_ctor(mm, ptdesc)) {
 		pagetable_free(ptdesc);
 		return NULL;
 	}
@@ -464,7 +467,7 @@ void pmd_fragment_free(unsigned long *pmd)
 
 	BUG_ON(atomic_read(&ptdesc->pt_frag_refcount) <= 0);
 	if (atomic_dec_and_test(&ptdesc->pt_frag_refcount)) {
-		pagetable_pmd_dtor(ptdesc);
+		pagetable_dtor(ptdesc);
 		pagetable_free(ptdesc);
 	}
 }
@@ -578,7 +581,7 @@ int pmd_move_must_withdraw(struct spinlock *new_pmd_ptl,
 /*
  * Does the CPU support tlbie?
  */
-bool tlbie_capable __read_mostly = true;
+bool tlbie_capable __read_mostly = IS_ENABLED(CONFIG_PPC_RADIX_BROADCAST_TLBIE);
 EXPORT_SYMBOL(tlbie_capable);
 
 /*
@@ -586,7 +589,7 @@ EXPORT_SYMBOL(tlbie_capable);
  * address spaces? tlbie may still be used for nMMU accelerators, and for KVM
  * guest address spaces.
  */
-bool tlbie_enabled __read_mostly = true;
+bool tlbie_enabled __read_mostly = IS_ENABLED(CONFIG_PPC_RADIX_BROADCAST_TLBIE);
 
 static int __init setup_disable_tlbie(char *str)
 {

@@ -327,7 +327,7 @@ mtk_stp_split(struct btmtkuart_dev *bdev, const unsigned char *data, int count,
 	if (count <= 0)
 		return NULL;
 
-	/* Tranlate to how much the size of data H4 can handle so far */
+	/* Translate to how much the size of data H4 can handle so far */
 	*sz_h4 = min_t(int, count, bdev->stp_dlen);
 
 	/* Update the remaining size of STP packet */
@@ -872,7 +872,7 @@ static int btmtkuart_probe(struct serdev_device *serdev)
 	SET_HCIDEV_DEV(hdev, &serdev->dev);
 
 	hdev->manufacturer = 70;
-	set_bit(HCI_QUIRK_NON_PERSISTENT_SETUP, &hdev->quirks);
+	hci_set_quirk(hdev, HCI_QUIRK_NON_PERSISTENT_SETUP);
 
 	if (btmtkuart_is_standalone(bdev)) {
 		err = clk_prepare_enable(bdev->osc);

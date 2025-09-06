@@ -133,8 +133,8 @@ struct apds9960_data {
 	struct regmap_field *reg_enable_pxs;
 
 	/* state */
-	int als_int;
-	int pxs_int;
+	bool als_int;
+	bool pxs_int;
 	int gesture_mode_running;
 
 	/* gain values */
@@ -749,20 +749,16 @@ static int apds9960_read_event_config(struct iio_dev *indio_dev,
 	default:
 		return -EINVAL;
 	}
-
-	return 0;
 }
 
 static int apds9960_write_event_config(struct iio_dev *indio_dev,
 				       const struct iio_chan_spec *chan,
 				       enum iio_event_type type,
 				       enum iio_event_direction dir,
-				       int state)
+				       bool state)
 {
 	struct apds9960_data *data = iio_priv(indio_dev);
 	int ret;
-
-	state = !!state;
 
 	switch (chan->type) {
 	case IIO_PROXIMITY:
@@ -1161,7 +1157,7 @@ static const struct dev_pm_ops apds9960_pm_ops = {
 
 static const struct i2c_device_id apds9960_id[] = {
 	{ "apds9960" },
-	{}
+	{ }
 };
 MODULE_DEVICE_TABLE(i2c, apds9960_id);
 

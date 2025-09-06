@@ -1212,7 +1212,7 @@ static const struct spi_device_id adis16400_id[] = {
 	{"adis16405", ADIS16400},
 	{"adis16445", ADIS16445},
 	{"adis16448", ADIS16448},
-	{}
+	{ }
 };
 MODULE_DEVICE_TABLE(spi, adis16400_id);
 
@@ -1228,4 +1228,4 @@ module_spi_driver(adis16400_driver);
 MODULE_AUTHOR("Manuel Stahl <manuel.stahl@iis.fraunhofer.de>");
 MODULE_DESCRIPTION("Analog Devices ADIS16400/5 IMU SPI driver");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(IIO_ADISLIB);
+MODULE_IMPORT_NS("IIO_ADISLIB");

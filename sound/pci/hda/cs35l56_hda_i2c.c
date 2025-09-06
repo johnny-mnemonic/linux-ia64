@@ -26,6 +26,9 @@ static int cs35l56_hda_i2c_probe(struct i2c_client *clt)
 #ifdef CS35L56_WAKE_HOLD_TIME_US
 	cs35l56->base.can_hibernate = true;
 #endif
+
+	cs35l56->base.fw_reg = &cs35l56_fw_reg;
+
 	cs35l56->base.regmap = devm_regmap_init_i2c(clt, &cs35l56_regmap_i2c);
 	if (IS_ERR(cs35l56->base.regmap)) {
 		ret = PTR_ERR(cs35l56->base.regmap);
@@ -77,8 +80,8 @@ static struct i2c_driver cs35l56_hda_i2c_driver = {
 module_i2c_driver(cs35l56_hda_i2c_driver);
 
 MODULE_DESCRIPTION("HDA CS35L56 I2C driver");
-MODULE_IMPORT_NS(SND_HDA_SCODEC_CS35L56);
-MODULE_IMPORT_NS(SND_SOC_CS35L56_SHARED);
+MODULE_IMPORT_NS("SND_HDA_SCODEC_CS35L56");
+MODULE_IMPORT_NS("SND_SOC_CS35L56_SHARED");
 MODULE_AUTHOR("Richard Fitzgerald <rf@opensource.cirrus.com>");
 MODULE_AUTHOR("Simon Trimmer <simont@opensource.cirrus.com>");
 MODULE_LICENSE("GPL");
