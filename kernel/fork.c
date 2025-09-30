@@ -93,7 +93,7 @@
 #include <linux/kcov.h>
 #include <linux/livepatch.h>
 #include <linux/thread_info.h>
-#include <linux/stackleak.h>
+#include <linux/kstack_erase.h>
 #include <linux/kasan.h>
 #include <linux/scs.h>
 #include <linux/io_uring.h>
@@ -105,6 +105,7 @@
 #include <uapi/linux/pidfd.h>
 #include <linux/pidfs.h>
 #include <linux/tick.h>
+#include <linux/unwind_deferred.h>
 
 #include <asm/pgalloc.h>
 #include <linux/uaccess.h>
@@ -192,33 +193,33 @@ static inline void free_task_struct(struct task_struct *tsk)
 
 #ifndef CONFIG_ARCH_THREAD_STACK_ALLOCATOR
 
-/*
- * Allocate pages if THREAD_SIZE is >= PAGE_SIZE, otherwise use a
- * kmemcache based allocator.
- */
-# if THREAD_SIZE >= PAGE_SIZE || defined(CONFIG_VMAP_STACK)
-
-#  ifdef CONFIG_VMAP_STACK
+#ifdef CONFIG_VMAP_STACK
 /*
  * vmalloc() is a bit slow, and calling vfree() enough times will force a TLB
  * flush.  Try to minimize the number of calls by caching stacks.
  */
 #define NR_CACHED_STACKS 2
 static DEFINE_PER_CPU(struct vm_struct *, cached_stacks[NR_CACHED_STACKS]);
+/*
+ * Allocated stacks are cached and later reused by new threads, so memcg
+ * accounting is performed by the code assigning/releasing stacks to tasks.
+ * We need a zeroed memory without __GFP_ACCOUNT.
+ */
+#define GFP_VMAP_STACK (GFP_KERNEL | __GFP_ZERO)
 
 struct vm_stack {
 	struct rcu_head rcu;
 	struct vm_struct *stack_vm_area;
 };
 
-static bool try_release_thread_stack_to_cache(struct vm_struct *vm)
+static bool try_release_thread_stack_to_cache(struct vm_struct *vm_area)
 {
 	unsigned int i;
 
 	for (i = 0; i < NR_CACHED_STACKS; i++) {
 		struct vm_struct *tmp = NULL;
 
-		if (this_cpu_try_cmpxchg(cached_stacks[i], &tmp, vm))
+		if (this_cpu_try_cmpxchg(cached_stacks[i], &tmp, vm_area))
 			return true;
 	}
 	return false;
@@ -227,11 +228,12 @@ static bool try_release_thread_stack_to_cache(struct vm_struct *vm)
 static void thread_stack_free_rcu(struct rcu_head *rh)
 {
 	struct vm_stack *vm_stack = container_of(rh, struct vm_stack, rcu);
+	struct vm_struct *vm_area = vm_stack->stack_vm_area;
 
 	if (try_release_thread_stack_to_cache(vm_stack->stack_vm_area))
 		return;
 
-	vfree(vm_stack);
+	vfree(vm_area->addr);
 }
 
 static void thread_stack_delayed_free(struct task_struct *tsk)
@@ -244,32 +246,32 @@ static void thread_stack_delayed_free(struct task_struct *tsk)
 
 static int free_vm_stack_cache(unsigned int cpu)
 {
-	struct vm_struct **cached_vm_stacks = per_cpu_ptr(cached_stacks, cpu);
+	struct vm_struct **cached_vm_stack_areas = per_cpu_ptr(cached_stacks, cpu);
 	int i;
 
 	for (i = 0; i < NR_CACHED_STACKS; i++) {
-		struct vm_struct *vm_stack = cached_vm_stacks[i];
+		struct vm_struct *vm_area = cached_vm_stack_areas[i];
 
-		if (!vm_stack)
+		if (!vm_area)
 			continue;
 
-		vfree(vm_stack->addr);
-		cached_vm_stacks[i] = NULL;
+		vfree(vm_area->addr);
+		cached_vm_stack_areas[i] = NULL;
 	}
 
 	return 0;
 }
 
-static int memcg_charge_kernel_stack(struct vm_struct *vm)
+static int memcg_charge_kernel_stack(struct vm_struct *vm_area)
 {
 	int i;
 	int ret;
 	int nr_charged = 0;
 
-	BUG_ON(vm->nr_pages != THREAD_SIZE / PAGE_SIZE);
+	BUG_ON(vm_area->nr_pages != THREAD_SIZE / PAGE_SIZE);
 
 	for (i = 0; i < THREAD_SIZE / PAGE_SIZE; i++) {
-		ret = memcg_kmem_charge_page(vm->pages[i], GFP_KERNEL, 0);
+		ret = memcg_kmem_charge_page(vm_area->pages[i], GFP_KERNEL, 0);
 		if (ret)
 			goto err;
 		nr_charged++;
@@ -277,55 +279,47 @@ static int memcg_charge_kernel_stack(struct vm_struct *vm)
 	return 0;
 err:
 	for (i = 0; i < nr_charged; i++)
-		memcg_kmem_uncharge_page(vm->pages[i], 0);
+		memcg_kmem_uncharge_page(vm_area->pages[i], 0);
 	return ret;
 }
 
 static int alloc_thread_stack_node(struct task_struct *tsk, int node)
 {
-	struct vm_struct *vm;
+	struct vm_struct *vm_area;
 	void *stack;
 	int i;
 
 	for (i = 0; i < NR_CACHED_STACKS; i++) {
-		struct vm_struct *s;
-
-		s = this_cpu_xchg(cached_stacks[i], NULL);
-
-		if (!s)
+		vm_area = this_cpu_xchg(cached_stacks[i], NULL);
+		if (!vm_area)
 			continue;
 
 		/* Reset stack metadata. */
-		kasan_unpoison_range(s->addr, THREAD_SIZE);
+		kasan_unpoison_range(vm_area->addr, THREAD_SIZE);
 
-		stack = kasan_reset_tag(s->addr);
+		stack = kasan_reset_tag(vm_area->addr);
 
 		/* Clear stale pointers from reused stack. */
 		memset(stack, 0, THREAD_SIZE);
 
-		if (memcg_charge_kernel_stack(s)) {
-			vfree(s->addr);
+		if (memcg_charge_kernel_stack(vm_area)) {
+			vfree(vm_area->addr);
 			return -ENOMEM;
 		}
 
-		tsk->stack_vm_area = s;
+		tsk->stack_vm_area = vm_area;
 		tsk->stack = stack;
 		return 0;
 	}
 
-	/*
-	 * Allocated stacks are cached and later reused by new threads,
-	 * so memcg accounting is performed manually on assigning/releasing
-	 * stacks to tasks. Drop __GFP_ACCOUNT.
-	 */
 	stack = __vmalloc_node(THREAD_SIZE, THREAD_ALIGN,
-				     THREADINFO_GFP & ~__GFP_ACCOUNT,
+				     GFP_VMAP_STACK,
 				     node, __builtin_return_address(0));
 	if (!stack)
 		return -ENOMEM;
 
-	vm = find_vm_area(stack);
-	if (memcg_charge_kernel_stack(vm)) {
+	vm_area = find_vm_area(stack);
+	if (memcg_charge_kernel_stack(vm_area)) {
 		vfree(stack);
 		return -ENOMEM;
 	}
@@ -334,7 +328,7 @@ static int alloc_thread_stack_node(struct task_struct *tsk, int node)
 	 * free_thread_stack() can be called in interrupt context,
 	 * so cache the vm_struct.
 	 */
-	tsk->stack_vm_area = vm;
+	tsk->stack_vm_area = vm_area;
 	stack = kasan_reset_tag(stack);
 	tsk->stack = stack;
 	return 0;
@@ -349,7 +343,13 @@ static void free_thread_stack(struct task_struct *tsk)
 	tsk->stack_vm_area = NULL;
 }
 
-#  else /* !CONFIG_VMAP_STACK */
+#else /* !CONFIG_VMAP_STACK */
+
+/*
+ * Allocate pages if THREAD_SIZE is >= PAGE_SIZE, otherwise use a
+ * kmemcache based allocator.
+ */
+#if THREAD_SIZE >= PAGE_SIZE
 
 static void thread_stack_free_rcu(struct rcu_head *rh)
 {
@@ -381,8 +381,7 @@ static void free_thread_stack(struct task_struct *tsk)
 	tsk->stack = NULL;
 }
 
-#  endif /* CONFIG_VMAP_STACK */
-# else /* !(THREAD_SIZE >= PAGE_SIZE || defined(CONFIG_VMAP_STACK)) */
+#else /* !(THREAD_SIZE >= PAGE_SIZE) */
 
 static struct kmem_cache *thread_stack_cache;
 
@@ -421,7 +420,8 @@ void thread_stack_cache_init(void)
 	BUG_ON(thread_stack_cache == NULL);
 }
 
-# endif /* THREAD_SIZE >= PAGE_SIZE || defined(CONFIG_VMAP_STACK) */
+#endif /* THREAD_SIZE >= PAGE_SIZE */
+#endif /* CONFIG_VMAP_STACK */
 #else /* CONFIG_ARCH_THREAD_STACK_ALLOCATOR */
 
 static int alloc_thread_stack_node(struct task_struct *tsk, int node)
@@ -459,11 +459,11 @@ static struct kmem_cache *mm_cachep;
 static void account_kernel_stack(struct task_struct *tsk, int account)
 {
 	if (IS_ENABLED(CONFIG_VMAP_STACK)) {
-		struct vm_struct *vm = task_stack_vm_area(tsk);
+		struct vm_struct *vm_area = task_stack_vm_area(tsk);
 		int i;
 
 		for (i = 0; i < THREAD_SIZE / PAGE_SIZE; i++)
-			mod_lruvec_page_state(vm->pages[i], NR_KERNEL_STACK_KB,
+			mod_lruvec_page_state(vm_area->pages[i], NR_KERNEL_STACK_KB,
 					      account * (PAGE_SIZE / 1024));
 	} else {
 		void *stack = task_stack_page(tsk);
@@ -479,12 +479,12 @@ void exit_task_stack_account(struct task_struct *tsk)
 	account_kernel_stack(tsk, -1);
 
 	if (IS_ENABLED(CONFIG_VMAP_STACK)) {
-		struct vm_struct *vm;
+		struct vm_struct *vm_area;
 		int i;
 
-		vm = task_stack_vm_area(tsk);
+		vm_area = task_stack_vm_area(tsk);
 		for (i = 0; i < THREAD_SIZE / PAGE_SIZE; i++)
-			memcg_kmem_uncharge_page(vm->pages[i], 0);
+			memcg_kmem_uncharge_page(vm_area->pages[i], 0);
 	}
 }
 
@@ -607,9 +607,12 @@ static void check_mm(struct mm_struct *mm)
 	for (i = 0; i < NR_MM_COUNTERS; i++) {
 		long x = percpu_counter_sum(&mm->rss_stat[i]);
 
-		if (unlikely(x))
-			pr_alert("BUG: Bad rss-counter state mm:%p type:%s val:%ld\n",
-				 mm, resident_page_types[i], x);
+		if (unlikely(x)) {
+			pr_alert("BUG: Bad rss-counter state mm:%p type:%s val:%ld Comm:%s Pid:%d\n",
+				 mm, resident_page_types[i], x,
+				 current->comm,
+				 task_pid_nr(current));
+		}
 	}
 
 	if (mm_pgtables_bytes(mm))
@@ -754,6 +757,7 @@ void __put_task_struct(struct task_struct *tsk)
 	WARN_ON(refcount_read(&tsk->usage));
 	WARN_ON(tsk == current);
 
+	unwind_task_free(tsk);
 	sched_ext_free(tsk);
 	io_uring_free(tsk);
 	cgroup_free(tsk);
@@ -1072,7 +1076,6 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	RCU_INIT_POINTER(mm->exe_file, NULL);
 	mmu_notifier_subscriptions_init(mm);
 	init_tlb_flush_pending(mm);
-	futex_mm_init(mm);
 #if defined(CONFIG_TRANSPARENT_HUGEPAGE) && !defined(CONFIG_SPLIT_PMD_PTLOCKS)
 	mm->pmd_huge_pte = NULL;
 #endif
@@ -1086,6 +1089,9 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 		mm->flags = default_dump_filter;
 		mm->def_flags = 0;
 	}
+
+	if (futex_mm_init(mm))
+		goto fail_mm_init;
 
 	if (mm_alloc_pgd(mm))
 		goto fail_nopgd;
@@ -1116,6 +1122,8 @@ fail_nocontext:
 fail_noid:
 	mm_free_pgd(mm);
 fail_nopgd:
+	futex_hash_free(mm);
+fail_mm_init:
 	free_mm(mm);
 	return NULL;
 }
@@ -1171,7 +1179,7 @@ void mmput(struct mm_struct *mm)
 }
 EXPORT_SYMBOL_GPL(mmput);
 
-#ifdef CONFIG_MMU
+#if defined(CONFIG_MMU) || defined(CONFIG_FUTEX_PRIVATE_HASH)
 static void mmput_async_fn(struct work_struct *work)
 {
 	struct mm_struct *mm = container_of(work, struct mm_struct,
@@ -1568,14 +1576,14 @@ static int copy_fs(unsigned long clone_flags, struct task_struct *tsk)
 	struct fs_struct *fs = current->fs;
 	if (clone_flags & CLONE_FS) {
 		/* tsk->fs is already what we want */
-		spin_lock(&fs->lock);
+		read_seqlock_excl(&fs->seq);
 		/* "users" and "in_exec" locked for check_unsafe_exec() */
 		if (fs->in_exec) {
-			spin_unlock(&fs->lock);
+			read_sequnlock_excl(&fs->seq);
 			return -EAGAIN;
 		}
 		fs->users++;
-		spin_unlock(&fs->lock);
+		read_sequnlock_excl(&fs->seq);
 		return 0;
 	}
 	tsk->fs = copy_fs_struct(fs);
@@ -1912,10 +1920,7 @@ static void copy_oom_score_adj(u64 clone_flags, struct task_struct *tsk)
 #ifdef CONFIG_RV
 static void rv_task_fork(struct task_struct *p)
 {
-	int i;
-
-	for (i = 0; i < RV_PER_TASK_MONITORS; i++)
-		p->rv[i].da_mon.monitoring = false;
+	memset(&p->rv, 0, sizeof(p->rv));
 }
 #else
 #define rv_task_fork(p) do {} while (0)
@@ -2149,9 +2154,8 @@ __latent_entropy struct task_struct *copy_process(
 	lockdep_init_task(p);
 #endif
 
-#ifdef CONFIG_DEBUG_MUTEXES
 	p->blocked_on = NULL; /* not blocked yet */
-#endif
+
 #ifdef CONFIG_BCACHE
 	p->sequential_io	= 0;
 	p->sequential_io_avg	= 0;
@@ -2160,6 +2164,8 @@ __latent_entropy struct task_struct *copy_process(
 	RCU_INIT_POINTER(p->bpf_storage, NULL);
 	p->bpf_ctx = NULL;
 #endif
+
+	unwind_task_init(p);
 
 	/* Perform scheduler related setup. Assign this task to a CPU. */
 	retval = sched_fork(clone_flags, p);
@@ -2315,7 +2321,7 @@ __latent_entropy struct task_struct *copy_process(
 	if (need_futex_hash_allocate_default(clone_flags)) {
 		retval = futex_hash_allocate_default();
 		if (retval)
-			goto bad_fork_core_free;
+			goto bad_fork_cancel_cgroup;
 		/*
 		 * If we fail beyond this point we don't free the allocated
 		 * futex hash map. We assume that another thread will be created
@@ -2769,7 +2775,7 @@ SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
 }
 #endif
 
-noinline static int copy_clone_args_from_user(struct kernel_clone_args *kargs,
+static noinline int copy_clone_args_from_user(struct kernel_clone_args *kargs,
 					      struct clone_args __user *uargs,
 					      size_t usize)
 {
@@ -3175,13 +3181,13 @@ int ksys_unshare(unsigned long unshare_flags)
 
 		if (new_fs) {
 			fs = current->fs;
-			spin_lock(&fs->lock);
+			read_seqlock_excl(&fs->seq);
 			current->fs = new_fs;
 			if (--fs->users)
 				new_fs = NULL;
 			else
 				new_fs = fs;
-			spin_unlock(&fs->lock);
+			read_sequnlock_excl(&fs->seq);
 		}
 
 		if (new_fd)
@@ -3242,7 +3248,7 @@ int unshare_files(void)
 	return 0;
 }
 
-int sysctl_max_threads(const struct ctl_table *table, int write,
+static int sysctl_max_threads(const struct ctl_table *table, int write,
 		       void *buffer, size_t *lenp, loff_t *ppos)
 {
 	struct ctl_table t;
@@ -3264,3 +3270,21 @@ int sysctl_max_threads(const struct ctl_table *table, int write,
 
 	return 0;
 }
+
+static const struct ctl_table fork_sysctl_table[] = {
+	{
+		.procname	= "threads-max",
+		.data		= NULL,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= sysctl_max_threads,
+	},
+};
+
+static int __init init_fork_sysctl(void)
+{
+	register_sysctl_init("kernel", fork_sysctl_table);
+	return 0;
+}
+
+subsys_initcall(init_fork_sysctl);
