@@ -396,7 +396,7 @@ void __kretprobe_trampoline(void)
 {
 }
 
-int __kprobes trampoline_probe_handler(struct kprobe *p, struct pt_regs *regs)
+static int __kprobes trampoline_probe_handler(struct kprobe *p, struct pt_regs *regs)
 {
 	regs->cr_iip = __kretprobe_trampoline_handler(regs, NULL);
 	/*
