@@ -94,7 +94,20 @@ acpi_tb_print_table_header(acpi_physical_address address,
 			   struct acpi_table_header *header)
 {
 	struct acpi_table_header local_header;
-	if (ACPI_VALIDATE_RSDP_SIG(ACPI_CAST_PTR(struct acpi_table_rsdp,
+
+#pragma GCC diagnostic push
+#if defined(__GNUC__) && __GNUC__ >= 11
+#pragma GCC diagnostic ignored "-Wstringop-overread"
+#endif
+
+	if (ACPI_COMPARE_NAMESEG(header->signature, ACPI_SIG_FACS)) {
+
+		/* FACS only has signature and length fields */
+
+		ACPI_INFO(("%-4.4s 0x%8.8X%8.8X %06X",
+			   header->signature, ACPI_FORMAT_UINT64(address),
+			   header->length));
+	} else if (ACPI_VALIDATE_RSDP_SIG(ACPI_CAST_PTR(struct acpi_table_rsdp,
 							header)->signature)) {
 
 		/* RSDP has no common fields */
@@ -142,4 +155,5 @@ acpi_tb_print_table_header(acpi_physical_address address,
 			   local_header.asl_compiler_id,
 			   local_header.asl_compiler_revision));
 	}
+#pragma GCC diagnostic pop
 }
