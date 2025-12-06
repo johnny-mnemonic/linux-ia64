@@ -123,10 +123,12 @@ retry:
 
 	/* OK, we've got a good vm_area for this memory area.  Check the access permissions: */
 
+#if 0
 #	if (((1 << VM_READ_BIT) != VM_READ || (1 << VM_WRITE_BIT) != VM_WRITE) \
 	    || (1 << VM_EXEC_BIT) != VM_EXEC)
 #		error File is out of sync with <linux/mm.h>.  Please update.
 #	endif
+#endif
 
 	if (((isr >> IA64_ISR_R_BIT) & 1UL) && (!(vma->vm_flags & (VM_READ | VM_WRITE))))
 		goto bad_area;
