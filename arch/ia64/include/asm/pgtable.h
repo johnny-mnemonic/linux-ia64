@@ -444,8 +444,7 @@ static inline pte_t pte_swp_clear_exclusive(pte_t pte)
  * for zero-mapped memory areas etc..
  */
 extern unsigned long empty_zero_page[PAGE_SIZE/sizeof(unsigned long)];
-extern struct page *zero_page_memmap_ptr;
-#define ZERO_PAGE(vaddr) (zero_page_memmap_ptr)
+#define ZERO_PAGE(vaddr)	(virt_to_page(ia64_imva(empty_zero_page)))
 
 /* We provide our own get_unmapped_area to cope with VA holes for userland */
 #define HAVE_ARCH_UNMAPPED_AREA
