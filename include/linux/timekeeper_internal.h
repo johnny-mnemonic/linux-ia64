@@ -190,7 +190,7 @@ struct timekeeper {
 	s32			tai_offset;
 };
 
-#ifdef CONFIG_GENERIC_GETTIMEOFDAY
+#ifdef CONFIG_GENERIC_TIME_VSYSCALL
 
 extern void update_vsyscall(struct timekeeper *tk);
 extern void update_vsyscall_tz(void);
