@@ -190,7 +190,11 @@ struct timekeeper {
 	s32			tai_offset;
 };
 
-#ifdef CONFIG_GENERIC_GETTIMEOFDAY
+/*
+ * ia64 hasn't been switched to the generic vDSO library yet and still
+ * has its own implementation for the following two function prototypes.
+ */
+#if defined(CONFIG_GENERIC_GETTIMEOFDAY) || defined(CONFIG_IA64)
 
 extern void update_vsyscall(struct timekeeper *tk);
 extern void update_vsyscall_tz(void);
